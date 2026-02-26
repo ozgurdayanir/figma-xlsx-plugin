@@ -97,7 +97,7 @@ function getVariantsFromSelection(sel) {
 
 function classifyVariantName(n) {
   var name = String(n || "");
-  // "Property 1=Gainers" / "Property 1=Losers"
+  // "Status=Gainers" / "Status=Losers"
   if (name.indexOf("Gainers") !== -1) return "GAINERS";
   if (name.indexOf("Losers") !== -1) return "LOSERS";
   return "UNKNOWN";
