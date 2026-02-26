@@ -1,0 +1,155 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      body { font: 12px/1.4 system-ui; padding: 12px; }
+      .box { border: 1px solid #2a2a2a; border-radius: 10px; padding: 12px; }
+      button { width: 100%; padding: 10px 12px; border-radius: 10px; border: 0; cursor: pointer; margin-top: 10px; }
+      .muted { opacity: .7; }
+      pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; }
+      label { display:flex; gap:8px; align-items:center; margin-top:10px; }
+      input[type="file"] { width: 100%; }
+    </style>
+  </head>
+
+  <body>
+    <div class="box">
+      <div><b>XLSX Import</b></div>
+      <div class="muted" style="margin:6px 0 10px;">
+        Sayfa1 → Gainers: B3:D7 / Losers: G3:I7
+      </div>
+
+      <input id="file" type="file" accept=".xlsx,.xls" />
+
+      <label>
+        <input id="comma" type="checkbox" checked />
+        Yüzdede virgül kullan (28,66%)
+      </label>
+
+      <button id="apply" disabled>Seçili Figma frame’ine uygula</button>
+      <button id="close">Kapat</button>
+
+      <div style="margin-top:10px" class="muted">Önizleme:</div>
+      <pre id="preview">Dosya bekleniyor…</pre>
+    </div>
+
+    <!-- SheetJS (xlsx) CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    <script>
+      const fileInput = document.getElementById("file");
+      const applyBtn = document.getElementById("apply");
+      const closeBtn = document.getElementById("close");
+      const preview = document.getElementById("preview");
+      const comma = document.getElementById("comma");
+
+      let parsed = null;
+
+      function cell(ws, addr) {
+        return ws[addr] || null;
+      }
+
+      function fallbackPrice(n) {
+        if (Number.isNaN(n)) return "";
+        const s = n < 1 ? n.toFixed(4) : n.toFixed(2);
+        return `$${s.replace(/\.?0+$/, (m) => (m.startsWith(".") ? "" : m))}`;
+      }
+
+      function fallbackPercent(n) {
+        if (Number.isNaN(n)) return "";
+        const pct = n * 100;
+        const sign = pct >= 0 ? "+" : "";
+        return `${sign}${pct.toFixed(2)}%`;
+      }
+
+      function rowData(coin, priceCell, changeCell) {
+        if (!coin) return null;
+
+        const priceText = (priceCell && (priceCell.w ?? priceCell.v)) != null
+          ? String(priceCell.w ?? fallbackPrice(Number(priceCell.v)))
+          : "";
+
+        let changeText = (changeCell && (changeCell.w ?? changeCell.v)) != null
+          ? String(changeCell.w ?? fallbackPercent(Number(changeCell.v)))
+          : "";
+
+        // "24.59%" gelirse + ekle
+        if (/^\d/.test(changeText)) changeText = `+${changeText}`;
+
+        return { coin: String(coin), priceText, changeText };
+      }
+
+      function normalizePercentComma(s) {
+        return s.replace(/(\d)\.(\d)/g, "$1,$2");
+      }
+
+      fileInput.addEventListener("change", async () => {
+        const f = fileInput.files?.[0];
+        if (!f) return;
+
+        const buf = await f.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const ws = wb.Sheets["Sayfa1"] || wb.Sheets[wb.SheetNames[0]];
+
+        const gainers = [];
+        for (let r = 3; r <= 7; r++) {
+          const coin = cell(ws, `B${r}`)?.v;
+          const price = cell(ws, `C${r}`);
+          const change = cell(ws, `D${r}`);
+          const row = rowData(coin, price, change);
+          if (row) gainers.push(row);
+        }
+
+        const losers = [];
+        for (let r = 3; r <= 7; r++) {
+          const coin = cell(ws, `G${r}`)?.v;
+          const price = cell(ws, `H${r}`);
+          const change = cell(ws, `I${r}`);
+          const row = rowData(coin, price, change);
+          if (row) losers.push(row);
+        }
+
+        parsed = { gainers, losers };
+        applyBtn.disabled = false;
+
+        preview.textContent =
+          "GAINERS:\n" + JSON.stringify(gainers, null, 2) +
+          "\n\nLOSERS:\n" + JSON.stringify(losers, null, 2);
+      });
+
+      applyBtn.addEventListener("click", () => {
+        if (!parsed) return;
+
+        // virgül istiyorsan sadece yüzdeyi dönüştür
+        const useComma = comma.checked;
+        const payload = JSON.parse(JSON.stringify(parsed));
+        if (useComma) {
+          payload.gainers.forEach(r => r.changeText = normalizePercentComma(r.changeText));
+          payload.losers.forEach(r => r.changeText = normalizePercentComma(r.changeText));
+        }
+
+        parent.postMessage(
+          { pluginMessage: { type: "APPLY_DATA", payload } },
+          "*"
+        );
+      });
+
+      closeBtn.addEventListener("click", () => {
+        parent.postMessage({ pluginMessage: { type: "CLOSE" } }, "*");
+      });
+    </script>
+    <script>
+        window.onmessage = (event) => {
+          const msg = event.data.pluginMessage;
+          if (!msg) return;
+      
+          if (msg.type === "DEBUG_REPORT") {
+            const pre = document.getElementById("preview");
+            pre.textContent =
+              "DEBUG REPORT:\n" + JSON.stringify(msg.debug, null, 2) + "\n\n" + pre.textContent;
+          }
+        };
+      </script>
+  </body>
+</html>
